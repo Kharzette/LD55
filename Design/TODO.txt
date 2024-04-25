@@ -1,1 +1,17 @@
-	goblins
+	Get ColladaConvert working in linux
+	See if paint.net will work in linux
+	See if 3dcoat will work in linux
+	Terrain Stuff
+		Full traverse ray recording
+			Draw and play back each recursion step by step
+			Record previous x iterations
+				Usually when a problem is spotted it happened last frame
+		Fast height at xz function for onGround stuff
+		Revive old Terrain editor?
+			Mainly need a good way to paint layers
+		Need some concept of a grand overall map of heightmaps
+			Some way to stitch multiple together
+		Maybe look into that newer fractal generation?
+		Shadowmapping
+	Trees and stuff
+	Fix busted 3d audio

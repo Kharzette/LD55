@@ -1,2 +1,109 @@
 Summoning!
-A third person game of some sort...
+	A third person game of some sort...
+		Clear planar incursions into the prime by evil outsiders
+		Prime world variety of time periods?
+			More art work
+		Randomly generated?
+	Sanctify areas defiled by enemies?
+	Summon holy friends
+		types
+			ghostly knight
+			fairy
+			elf maiden
+			elf warrior
+			Watcher (greater angel type)
+		These friends can be dangerous
+		Must have high purity to summon
+	Purity
+		reducers
+			Eating
+			filth
+			taking damage
+			miasma areas
+			lust
+			defiled sites
+			carrying evil items
+			carrying lots of gold
+		gainers
+			bathing
+			prayer
+			fasting
+			meditation
+			holy sites
+			carrying holy items
+			blessings
+	Abilities
+		Grab / Drag / Pull / interact
+		Pray / Meditate
+		Basic attack (depends on weapon)
+		Active block?
+		Use Item
+	Holy Sites
+		Summon friends
+		Enchant items
+			+ on weapons / armor
+			charges on holy staves
+		Sanctify evil gear (chance to break)
+		Heal damaged or resurrect slain friends
+		Meditate to learn new enchants
+		Repair gear
+		Cure status effects
+	Enchants
+		Bless charges
+		Lightning charges
+		Holy beam charges
+		Permanent + to gear
+		Temporary summons
+		Whisk to nearest holy site
+		Resistances
+	Status effects
+		Terror (loss of control)
+		Disease (slow movement, slow attack, +filth)
+		Poison (health reduction over time)
+		Low health slow (movement & attack speed)
+		Intoxication (slow movement & attack speed)
+		Gluttony (slow movement & attack speed)
+		Blessed (+ to attack and defense)
+		Burning (-health +filth)
+		Wraith touched (-mana -purity)
+		Slimed (+filth -attack)
+		Bloody (+filth -attack)
+		Blind (-attack -defense -movement)
+		Chilled (-attack -defense -movement)
+		Hasted (+atkspeed +movespeed)
+		Cleansed (-filth)
+		Snared (-movespeed)
+	Anims needed for protag
+		Idle
+		Run
+		draw
+		sheathe
+		sword 1 hand attack
+		sword & shield 1 hand attack
+		2 hand sword attack
+		staff attack
+		spear 1 hand attack
+		spear & shield attack
+		1hand sword parry
+		1hand sword & shield block
+		2 hand sword parry
+		staff parry
+		spear 1 hand parry
+		spear shield block
+		get hit
+		die
+		block impact
+		parry impact
+		block stagger
+		parry stagger
+		meditate
+		pray
+		use item food
+		use item drink
+		use item medical (needle stab?)
+		use item horn
+		pull with free hands
+		drag something with off hand
+		summon spell
+		enchant item spell (at circle)
+		repair stuff
