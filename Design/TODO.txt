@@ -1,6 +1,6 @@
 	Get ColladaConvert working in linux
-	See if paint.net will work in linux
-	See if 3dcoat will work in linux
+no	See if paint.net will work in linux
+x	See if 3dcoat will work in linux
 	Terrain Stuff
 		Full traverse ray recording
 			Draw and play back each recursion step by step
@@ -15,3 +15,4 @@
 		Shadowmapping
 	Trees and stuff
 	Fix busted 3d audio
+	Collide camera with terrain

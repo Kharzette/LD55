@@ -104,7 +104,8 @@ static void	KeyMoveRightEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyMoveUpEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyMoveDownEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyMoveJumpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeySprintEH(void *pContext, const SDL_Event *pEvt);
+static void	KeySprintDownEH(void *pContext, const SDL_Event *pEvt);
+static void	KeySprintUpEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnRightEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnUpEH(void *pContext, const SDL_Event *pEvt);
@@ -542,13 +543,22 @@ static void	KeyMoveJumpEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputJump(pTS->mpBPM);
 }
 
-static void	KeySprintEH(void *pContext, const SDL_Event *pEvt)
+static void	KeySprintDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
 	assert(pTS);
 
-	BPM_InputSprint(pTS->mpBPM);
+	BPM_InputSprint(pTS->mpBPM, true);
+}
+
+static void	KeySprintUpEH(void *pContext, const SDL_Event *pEvt)
+{
+	TestStuff	*pTS	=(TestStuff *)pContext;
+
+	assert(pTS);
+
+	BPM_InputSprint(pTS->mpBPM, false);
 }
 
 static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt)
@@ -665,7 +675,6 @@ static void	SetupKeyBinds(Input *pInp)
 	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_c, KeyMoveUpEH);
 	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_z, KeyMoveDownEH);
 	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_SPACE, KeyMoveJumpEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_LSHIFT, KeySprintEH);
 
 	//key turning
 	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_q, KeyTurnLeftEH);
@@ -681,6 +690,8 @@ static void	SetupKeyBinds(Input *pInp)
 	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_RIGHT, RightMouseUpEH);
 	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDL_BUTTON_LEFT, LeftMouseDownEH);
 	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_LEFT, LeftMouseUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDLK_LSHIFT, KeySprintDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_LSHIFT, KeySprintUpEH);
 }
 
 static void	SetupRastVP(GraphicsDevice *pGD)
