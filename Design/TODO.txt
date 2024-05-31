@@ -1,4 +1,4 @@
-	Get ColladaConvert working in linux
+x	Get ColladaConvert working in linux
 no	See if paint.net will work in linux
 x	See if 3dcoat will work in linux
 	Terrain Stuff

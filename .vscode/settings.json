@@ -1,0 +1,5 @@
+{
+	"CurrentGame": "/mnt/SkyFather/Games/CurrentGame",
+	"CurrentGameLibs": "${config:CurrentGame}/libs",
+    "C_Cpp.default.compilerPath": "/usr/bin/gcc"
+}
