@@ -51,6 +51,7 @@
 #define	START_CAM_DIST	5.0f
 #define	MAX_CAM_DIST	25.0f
 #define	MIN_CAM_DIST	0.25f
+#define	NUM_REC_MOVES	256
 
 //should match CommonFunctions.hlsli
 #define	MAX_BONES		55
@@ -71,7 +72,12 @@ typedef struct	TestStuff_t
 	bool	mbFlyMode;
 
 	//character movement
-	vec3	mCharMoveVec;
+	vec3		mCharMoveVec;
+	vec3		mRecordedStarts[NUM_REC_MOVES];
+	vec3		mRecordedEnds[NUM_REC_MOVES];
+	int			mRecordIndex;
+	bool		mbRecording;
+	PrimObject	*mMoveRays;
 
 	//misc data
 	vec3	mDanglyForce;
@@ -87,10 +93,13 @@ static void		SetupRastVP(GraphicsDevice *pGD);
 static void		SetupDebugStrings(TestStuff *pTS, const StuffKeeper *pSK);
 static void		MoveCharacter(TestStuff *pTS, const vec3 moveVec);
 static DictSZ	*sLoadCharacterMeshParts(GraphicsDevice *pGD, StuffKeeper *pSK, const Character *pChar);
+static void		sSaveMoves(TestStuff *pTS, const char *szFileName);
+static void		sLoadMoves(TestStuff *pTS, const char *szFileName);
 
 //material setups
 static Material	*MakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK);
 static Material	*MakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK);
+static Material	*MakeRaysMat(TestStuff *pTS, const StuffKeeper *pSK);
 
 //input event handlers
 static void	ToggleFlyModeEH(void *pContext, const SDL_Event *pEvt);
@@ -111,6 +120,7 @@ static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnRightEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnUpEH(void *pContext, const SDL_Event *pEvt);
 static void	KeyTurnDownEH(void *pContext, const SDL_Event *pEvt);
+static void	KeySaveMovesEH(void *pContext, const SDL_Event *pEvt);
 static void MouseMoveEH(void *pContext, const SDL_Event *pEvt);
 static void EscEH(void *pContext, const SDL_Event *pEvt);
 
@@ -216,6 +226,7 @@ int main(void)
 	//materials
 	Material	*pTerMat	=MakeTerrainMat(pTS, pSK);
 	Material	*pSkyBoxMat	=MakeSkyBoxMat(pTS, pSK);
+	Material	*pRaysMat	=MakeRaysMat(pTS, pSK);
 
 	//character
 	Character	*pChar	=Character_Read("Characters/Protag.Character");
@@ -226,7 +237,10 @@ int main(void)
 	float	animTime		=0.0f;
 	float	maxDT			=0.0f;
 
-	pTS->mbRunning	=true;
+	sLoadMoves(pTS, "Moves.dbg");
+
+	pTS->mbRunning		=true;
+//	pTS->mbRecording	=true;
 	while(pTS->mbRunning)
 	{
 		pTS->mDeltaYaw		=0.0f;
@@ -376,6 +390,15 @@ int main(void)
 
 		//terrain draw
 		Terrain_DrawMat(pTS->mpTer, pTS->mpGD, pCBK, pTerMat);
+
+		//debug draw many rays
+		if(!pTS->mbRecording && pTS->mMoveRays != NULL)
+		{
+			GD_IASetVertexBuffers(pTS->mpGD, pTS->mMoveRays->mpVB, pTS->mMoveRays->mVertSize, 0);
+			GD_IASetIndexBuffers(pTS->mpGD, pTS->mMoveRays->mpIB, DXGI_FORMAT_R32_UINT, 0);
+			MAT_Apply(pRaysMat, pCBK, pTS->mpGD);
+			GD_DrawIndexed(pTS->mpGD, pTS->mMoveRays->mIndexCount, 0, 0);
+		}
 
 		//set mesh draw stuff
 		if(pTS->mbFlyMode)
@@ -583,6 +606,17 @@ static void	KeyTurnDownEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mDeltaPitch	-=KEYTURN_RATE;
 }
 
+static void	KeySaveMovesEH(void *pContext, const SDL_Event *pEvt)
+{
+	TestStuff	*pTS	=(TestStuff *)pContext;
+
+	assert(pTS);
+
+	sSaveMoves(pTS, "Moves.dbg");
+
+	pTS->mDeltaPitch	-=KEYTURN_RATE;
+}
+
 static void	EscEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
@@ -625,11 +659,30 @@ static Material	*MakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK)
 	return	pRet;
 }
 
+static Material	*MakeRaysMat(TestStuff *pTS, const StuffKeeper *pSK)
+{
+	Material	*pRet	=MAT_Create(pTS->mpGD);
+
+	vec3	light0		={	1.0f, 1.0f, 1.0f	};
+	vec3	light1		={	0.5f, 0.5f, 0.5f	};
+	vec3	light2		={	0.3f, 0.3f, 0.3f	};
+
+	MAT_SetLights(pRet, light0, light1, light2, pTS->mLightDir);
+	MAT_SetVShader(pRet, "WNormWPosVColorVS", pSK);
+	MAT_SetPShader(pRet, "TriSolidVColorSpecPS", pSK);
+	MAT_SetSolidColour(pRet, GLM_VEC4_ONE);
+	MAT_SetSpecular(pRet, GLM_VEC3_ONE, 4.0f);
+	MAT_SetWorld(pRet, GLM_MAT4_IDENTITY);
+
+	return	pRet;
+}
+
 static void	SetupKeyBinds(Input *pInp)
 {
 	//event style bindings
 	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_f, ToggleFlyModeEH);
 	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_ESCAPE, EscEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_v, KeySaveMovesEH);
 
 	//held bindings
 	//movement
@@ -725,6 +778,14 @@ static void	MoveCharacter(TestStuff *pTS, const vec3 moveVec)
 		vec3	end, newPos;
 		glm_vec3_add(pTS->mPlayerPos, moveVec, end);
 
+		glm_vec3_copy(pTS->mPlayerPos, pTS->mRecordedStarts[pTS->mRecordIndex]);
+		glm_vec3_copy(end, pTS->mRecordedEnds[pTS->mRecordIndex]);
+		pTS->mRecordIndex++;
+		if(pTS->mRecordIndex >= NUM_REC_MOVES)
+		{
+			pTS->mRecordIndex	=0;
+		}
+
 		int	footing	=Terrain_MoveSphere(pTS->mpTer, pTS->mPlayerPos, end, 0.25f, newPos);
 		
 		BPM_SetFooting(pTS->mpBPM, footing);
@@ -770,4 +831,57 @@ static DictSZ *sLoadCharacterMeshParts(GraphicsDevice *pGD, StuffKeeper *pSK, co
 	SZList_Clear(&pParts);
 
 	return	pMeshes;
+}
+
+static void	sSaveMoves(TestStuff *pTS, const char *szFileName)
+{
+	FILE	*f	=fopen(szFileName, "wb");
+	if(f == NULL)
+	{
+		printf("Couldn't open moves file %s...\n", szFileName);
+		return;
+	}
+
+	pTS->mbRecording	=false;
+
+	int	num	=NUM_REC_MOVES;
+
+	fwrite(&num, sizeof(int), 1, f);
+
+	fwrite(pTS->mRecordedStarts, sizeof(vec3), NUM_REC_MOVES, f);
+	fwrite(pTS->mRecordedEnds, sizeof(vec3), NUM_REC_MOVES, f);
+
+	fclose(f);
+}
+
+static void	sLoadMoves(TestStuff *pTS, const char *szFileName)
+{
+	FILE	*f	=fopen(szFileName, "rb");
+
+	if(f == NULL)
+	{
+		printf("Couldn't open moves file %s...\n", szFileName);
+		return;
+	}
+
+	pTS->mbRecording	=false;
+
+	int	num;
+	fread(&num, sizeof(int), 1, f);
+
+	assert(num == NUM_REC_MOVES);
+
+	fread(pTS->mRecordedStarts, sizeof(vec3), num, f);
+	fread(pTS->mRecordedEnds, sizeof(vec3), num, f);
+
+	fclose(f);
+
+	vec4	randCols[num];
+	for(int i=0;i < num;i++)
+	{
+		Misc_RandomColour(randCols[i]);
+	}
+
+	pTS->mMoveRays	=PF_CreateManyRays(pTS->mRecordedStarts,
+						pTS->mRecordedEnds, randCols, num, 0.015f, pTS->mpGD);
 }
