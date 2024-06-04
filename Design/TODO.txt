@@ -2,10 +2,11 @@ x	Get ColladaConvert working in linux
 no	See if paint.net will work in linux
 x	See if 3dcoat will work in linux
 	Terrain Stuff
-		Full traverse ray recording
-			Draw and play back each recursion step by step
+x		Full traverse ray recording
+x			Draw and play back each recursion step by step
 x			Record previous x iterations
 x				Usually when a problem is spotted it happened last frame
+x		draw footing while moving to string on screen
 		Fast height at xz function for onGround stuff
 		Revive old Terrain editor?
 			Mainly need a good way to paint layers
@@ -16,3 +17,8 @@ x				Usually when a problem is spotted it happened last frame
 	Trees and stuff
 	Fix busted 3d audio
 	Collide camera with terrain
+	Movement collider for characters using 2 spheres?
+		table with offset-to-origin depending on anim?
+	Slide animation for bad footing
+	Slide sound for bad footing
+	Slide particle for bad footing
