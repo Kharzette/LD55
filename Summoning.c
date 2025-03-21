@@ -3,8 +3,6 @@
 #include	<stdio.h>
 #include	<stdlib.h>
 #include	<assert.h>
-#include	<SDL3/SDL.h>
-#include	<SDL3/SDL_keycode.h>
 #include	<cglm/call.h>
 #include	"GrogLibsC/AudioLib/SoundEffect.h"
 #include	"GrogLibsC/AudioLib/Audio.h"
@@ -12,7 +10,8 @@
 #include	"GrogLibsC/MaterialLib/PostProcess.h"
 #include	"GrogLibsC/MaterialLib/Material.h"
 #include	"GrogLibsC/MaterialLib/MaterialLib.h"
-#include	"GrogLibsC/MaterialLib/ScreenText.h"
+#define	CLAY_IMPLEMENTATION
+#include	"GrogLibsC/MaterialLib/UIStuff.h"
 #include	"GrogLibsC/UtilityLib/GraphicsDevice.h"
 #include	"GrogLibsC/UtilityLib/StringStuff.h"
 #include	"GrogLibsC/UtilityLib/ListStuff.h"
@@ -21,35 +20,39 @@
 #include	"GrogLibsC/UtilityLib/DictionaryStuff.h"
 #include	"GrogLibsC/UtilityLib/UpdateTimer.h"
 #include	"GrogLibsC/UtilityLib/PrimFactory.h"
+#include	"GrogLibsC/UtilityLib/BipedMover.h"
+#include	"GrogLibsC/UtilityLib/PlaneMath.h"
 #include	"GrogLibsC/TerrainLib/Terrain.h"
-#include	"GrogLibsC/MeshLib/Mesh.h"
 #include	"GrogLibsC/MeshLib/AnimLib.h"
 #include	"GrogLibsC/MeshLib/Character.h"
 #include	"GrogLibsC/MeshLib/CommonPrims.h"
 #include	"GrogLibsC/InputLib/Input.h"
-#include	"GrogLibsC/UtilityLib/BipedMover.h"
+#include	"GrogLibsC/PhysicsLib/PhysicsStuff.h"
 
 
-#define	RESX			1280
-#define	RESY			720
-#define	ROT_RATE		10.0f
-#define	UVSCALE_RATE	1.0f
-#define	KEYTURN_RATE	0.01f
-#define	MOVE_RATE		0.1f
-#define	HEIGHT_SCALAR	0.15f
-#define	RAY_LEN			100.0f
-#define	RAY_WIDTH		0.05f
-#define	IMPACT_WIDTH	0.2f
-#define	NUM_RAYS		1000
-#define	MOUSE_TO_ANG	0.001f
-#define	MAX_ST_CHARS	256
-#define	START_CAM_DIST	5.0f
-#define	MAX_CAM_DIST	25.0f
-#define	MIN_CAM_DIST	0.25f
-#define	NUM_REC_MOVES	256
-
-//should match CommonFunctions.hlsli
-#define	MAX_BONES		55
+#define	RESX				1280
+#define	RESY				720
+#define	ROT_RATE			10.0f
+#define	UVSCALE_RATE		1.0f
+#define	KEYTURN_RATE		0.01f
+#define	MOVE_THRESHOLD		0.1f
+#define	MOVE_RATE			0.1f
+#define	HEIGHT_SCALAR		0.15f
+#define	TER_SMOOTH_STEPS	4
+#define	RAY_LEN				100.0f
+#define	RAY_WIDTH			0.05f
+#define	IMPACT_WIDTH		0.2f
+#define	NUM_RAYS			1000
+#define	MOUSE_TO_ANG		0.001f
+#define	MAX_ST_CHARS		256
+#define	START_CAM_DIST		5.0f
+#define	MAX_CAM_DIST		25.0f
+#define	MIN_CAM_DIST		0.25f
+#define	PLAYER_RADIUS		(0.25f)
+#define	PLAYER_HEIGHT		(1.75f)
+#define	PLAYER_EYE_OFFSET	(0.8)
+#define	MAX_UI_VERTS		(8192)
+#define	RAMP_ANGLE			0.7f	//steepness can traverse on foot
 
 
 //input context, stuff input handlers will need
@@ -58,7 +61,9 @@ typedef struct	TestStuff_t
 	GraphicsDevice	*mpGD;
 	Terrain			*mpTer;
 	GameCamera		*mpCam;
-	ScreenText		*mpST;
+	UIStuff			*mpUI;
+	PhysicsStuff	*mpPhys;
+	PhysVCharacter	*mpPhysChar;
 	BipedMover		*mpBPM;
 
 	//toggles
@@ -66,13 +71,14 @@ typedef struct	TestStuff_t
 	bool	mbRunning;
 	bool	mbFlyMode;
 
-	//character movement
-	vec3		mCharMoveVec;
-	vec3		mRecordedStarts[NUM_REC_MOVES];
-	vec3		mRecordedEnds[NUM_REC_MOVES];
-	int			mRecordIndex;
-	bool		mbRecording;
-	PrimObject	*mMoveRays;
+	//clay pointer stuff
+	Clay_Vector2	mScrollDelta;
+	Clay_Vector2	mMousePos;
+
+	//jolt stuff
+	
+	//prims
+	PrimObject      *mpSphere;
 
 	//misc data
 	vec3	mDanglyForce;
@@ -83,52 +89,50 @@ typedef struct	TestStuff_t
 }	TestStuff;
 
 //static forward decs
-static void		SetupKeyBinds(Input *pInp);
-static void		SetupRastVP(GraphicsDevice *pGD);
-static void		SetupDebugStrings(TestStuff *pTS, const StuffKeeper *pSK);
-static void		MoveCharacter(TestStuff *pTS, const vec3 moveVec);
-static DictSZ	*sLoadCharacterMeshParts(GraphicsDevice *pGD, StuffKeeper *pSK, const Character *pChar);
-static void		sSaveMoves(TestStuff *pTS, const char *szFileName);
-static void		sLoadMoves(TestStuff *pTS, const char *szFileName);
+static void	sSetupKeyBinds(Input *pInp);
+static void	sSetupRastVP(GraphicsDevice *pGD);
+static void	sSetDefaultCel(GraphicsDevice *pGD, CBKeeper *pCBK);
+
+//clay stuff
+static const Clay_RenderCommandArray sCreateLayout(const TestStuff *pTS, vec3 velocity);
+static void sHandleClayErrors(Clay_ErrorData errorData);
 
 //material setups
-static Material	*MakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK);
-static Material	*MakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK);
-static Material	*MakeRaysMat(TestStuff *pTS, const StuffKeeper *pSK);
-static Material	*MakeSphereMat(TestStuff *pTS, const StuffKeeper *pSK);
+static Material	*sMakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK);
+static Material	*sMakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK);
+static Material	*sMakeSphereMat(TestStuff *pTS, const StuffKeeper *pSK);
 
 //input event handlers
-static void	ToggleFlyModeEH(void *pContext, const SDL_Event *pEvt);
-static void	LeftMouseDownEH(void *pContext, const SDL_Event *pEvt);
-static void	LeftMouseUpEH(void *pContext, const SDL_Event *pEvt);
-static void	RightMouseDownEH(void *pContext, const SDL_Event *pEvt);
-static void	RightMouseUpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveForwardEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveBackEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveLeftEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveRightEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveUpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveDownEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyMoveJumpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeySprintDownEH(void *pContext, const SDL_Event *pEvt);
-static void	KeySprintUpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyTurnRightEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyTurnUpEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyTurnDownEH(void *pContext, const SDL_Event *pEvt);
-static void	KeySaveMovesEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyNextMoveEH(void *pContext, const SDL_Event *pEvt);
-static void	KeyPrevMoveEH(void *pContext, const SDL_Event *pEvt);
-static void MouseMoveEH(void *pContext, const SDL_Event *pEvt);
-static void EscEH(void *pContext, const SDL_Event *pEvt);
+static void	sToggleFlyModeEH(void *pContext, const SDL_Event *pEvt);
+static void	sLeftMouseDownEH(void *pContext, const SDL_Event *pEvt);
+static void	sLeftMouseUpEH(void *pContext, const SDL_Event *pEvt);
+static void	sRightMouseDownEH(void *pContext, const SDL_Event *pEvt);
+static void	sRightMouseUpEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveForwardEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveBackEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveLeftEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveRightEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveUpEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveDownEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyMoveJumpEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeySprintDownEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeySprintUpEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyTurnLeftEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyTurnRightEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyTurnUpEH(void *pContext, const SDL_Event *pEvt);
+static void	sKeyTurnDownEH(void *pContext, const SDL_Event *pEvt);
+static void sMouseMoveEH(void *pContext, const SDL_Event *pEvt);
+static void sEscEH(void *pContext, const SDL_Event *pEvt);
 
 
 int main(void)
 {
 	printf("Ludum Dare 55!\n");
 
+	PhysicsStuff	*pPhys	=Phys_Create();
+
 	//TODO: ask user when released
-//	Audio	*pAud	=Audio_Create(2);
+	Audio	*pAud	=Audio_Create(0);
 
 	//store a bunch of vars in a struct
 	//for ref/modifying by input handlers
@@ -136,23 +140,28 @@ int main(void)
 	memset(pTS, 0, sizeof(TestStuff));
 
 	//start in fly mode?
-	pTS->mbFlyMode	=false;
+	pTS->mbFlyMode	=true;
 	pTS->mCamDist	=START_CAM_DIST;
+	pTS->mpPhys		=pPhys;
 	
 	//set player on corner near origin
 	glm_vec3_scale(GLM_VEC3_ONE, 22.0f, pTS->mPlayerPos);
 
 	//input and key / mouse bindings
 	Input	*pInp	=INP_CreateInput();
-	SetupKeyBinds(pInp);
+	sSetupKeyBinds(pInp);
 
-	if(GD_Init(&pTS->mpGD, "Ludum Dare 55!  Summoning...", 0, 0, RESX, RESY, true, D3D_FEATURE_LEVEL_11_1) == false)
+	if(!GD_Init(&pTS->mpGD, "Ludum Dare 55!  Summoning...",
+		0, 0, RESX, RESY, true, D3D_FEATURE_LEVEL_11_1))
 	{
 		printf("Couldn't create GraphicsDevice!\n");
 		return	EXIT_FAILURE;
 	}
 
-	SetupRastVP(pTS->mpGD);
+	//turn on border
+	GD_SetWindowBordered(pTS->mpGD, true);
+	
+	sSetupRastVP(pTS->mpGD);
 
 	StuffKeeper	*pSK	=StuffKeeper_Create(pTS->mpGD);
 	if(pSK == NULL)
@@ -163,13 +172,13 @@ int main(void)
 	}
 
 	//a terrain chunk
-	pTS->mpTer	=Terrain_Create(pTS->mpGD, "Blort", "Textures/Terrain/HeightMaps/HeightMap.png", 4, HEIGHT_SCALAR);
+	pTS->mpTer	=Terrain_Create(pTS->mpGD, pPhys, "Blort",
+		"Textures/Terrain/HeightMaps/HeightMap.png",
+		TER_SMOOTH_STEPS, HEIGHT_SCALAR);
 
 	PrimObject	*pSkyCube	=PF_CreateCube(10.0f, true, pTS->mpGD);
 	CBKeeper	*pCBK		=CBK_Create(pTS->mpGD);
 	PostProcess	*pPP		=PP_Create(pTS->mpGD, pSK, pCBK);
-
-	SetupDebugStrings(pTS, pSK);
 
 	//set sky gradient
 	{
@@ -180,13 +189,15 @@ int main(void)
 		CBK_SetFogVars(pCBK, 50.0f, 300.0f, true);
 	}
 
+	sSetDefaultCel(pTS->mpGD, pCBK);
+
 	PP_SetTargets(pPP, pTS->mpGD, "BackColor", "BackDepth");
 
 	float	aspect	=(float)RESX / (float)RESY;
 
 	//these need align
 	__attribute((aligned(32)))	mat4	charMat, camProj, textProj;
-	__attribute((aligned(32)))	mat4	viewMat, headMat, guraMat, spTrans;
+	__attribute((aligned(32)))	mat4	viewMat;
 
 	pTS->mEyePos[1]	=0.6f;
 	pTS->mEyePos[2]	=4.5f;
@@ -197,7 +208,14 @@ int main(void)
 	//biped mover
 	pTS->mpBPM	=BPM_Create(pTS->mpCam);
 
-//	SoundEffectPlay("synth(3)", pTS->mPlayerPos);
+	//physics character
+	pTS->mpPhysChar	=Phys_CreateVCharacter(pPhys,
+		PLAYER_RADIUS, PLAYER_HEIGHT,
+		pTS->mPlayerPos);
+
+	BPM_SetMoveMethod(pTS->mpBPM, pTS->mbFlyMode? BPM_MOVE_FLY : BPM_MOVE_GROUND);
+
+	SoundEffectPlay("synth", pTS->mPlayerPos);
 
 	//3D Projection
 	GameCam_GetProjection(pTS->mpCam, camProj);
@@ -209,6 +227,18 @@ int main(void)
 	//set constant buffers to shaders, think I just have to do this once
 	CBK_SetCommonCBToShaders(pCBK, pTS->mpGD);
 
+	pTS->mpUI	=UI_Create(pTS->mpGD, pSK, MAX_UI_VERTS);
+
+	UI_AddFont(pTS->mpUI, "MeiryoUI26", 0);
+
+	//clay init
+    uint64_t totalMemorySize = Clay_MinMemorySize();
+    Clay_Arena clayMemory = Clay_CreateArenaWithCapacityAndMemory(totalMemorySize, malloc(totalMemorySize));
+    Clay_Initialize(clayMemory, (Clay_Dimensions) { (float)RESX, (float)RESY }, (Clay_ErrorHandler) { sHandleClayErrors });
+    Clay_SetMeasureTextFunction(UI_MeasureText, pTS->mpUI);
+
+	Clay_SetDebugModeEnabled(false);
+
 	pTS->mLightDir[0]		=0.3f;
 	pTS->mLightDir[1]		=-0.7f;
 	pTS->mLightDir[2]		=-0.5f;
@@ -219,30 +249,25 @@ int main(void)
 	UpdateTimer	*pUT	=UpdateTimer_Create(true, false);
 
 	//TODO: user config file or something?  144 might be too fast for some
-	UpdateTimer_SetFixedTimeStepMilliSeconds(pUT, 6.944444f);	//144hz
+//	UpdateTimer_SetFixedTimeStepMilliSeconds(pUT, 6.944444f);	//144hz
+	UpdateTimer_SetFixedTimeStepMilliSeconds(pUT, 16.66666f);	//60hz
 
 	//test prims
-	PrimObject	*pSphere	=PF_CreateSphere(GLM_VEC3_ZERO, 0.25f, pTS->mpGD);
+//	PrimObject	*pSphere	=PF_CreateSphere(GLM_VEC3_ZERO,	0.25f, false, pTS->mpGD);
 
 	//materials
-	Material	*pTerMat	=MakeTerrainMat(pTS, pSK);
-	Material	*pSkyBoxMat	=MakeSkyBoxMat(pTS, pSK);
-	Material	*pRaysMat	=MakeRaysMat(pTS, pSK);
-	Material	*pSphereMat	=MakeSphereMat(pTS, pSK);
+	Material	*pTerMat	=sMakeTerrainMat(pTS, pSK);
+	Material	*pSkyBoxMat	=sMakeSkyBoxMat(pTS, pSK);
+//	Material	*pSphereMat	=sMakeSphereMat(pTS, pSK);
 
 	//character
-	Character	*pChar	=Character_Read("Characters/Protag.Character");
+	Character	*pChar		=Character_Read(pTS->mpGD, pSK, "Characters/Protag.Character", false);
 	AnimLib		*pALib		=AnimLib_Read("Characters/Protag.AnimLib");
 	MaterialLib	*pCharMats	=MatLib_Read("Characters/Protag.MatLib", pSK);
-	DictSZ		*pMeshes	=sLoadCharacterMeshParts(pTS->mpGD, pSK, pChar);
 
 	float	animTime		=0.0f;
-	float	maxDT			=0.0f;
-
-	sLoadMoves(pTS, "Moves.dbg");
 
 	pTS->mbRunning		=true;
-	pTS->mbRecording	=true;
 	while(pTS->mbRunning)
 	{
 		pTS->mDeltaYaw		=0.0f;
@@ -253,20 +278,57 @@ int main(void)
 			secDelta > 0.0f;
 			secDelta =UpdateTimer_GetUpdateDeltaSeconds(pUT))
 		{
-			//zero out charmove
-			glm_vec3_zero(pTS->mCharMoveVec);
-
 			//do input here
 			//move turn etc
 			INP_Update(pInp, pTS);
 
-			bool	bJumped	=BPM_Update(pTS->mpBPM, secDelta, pTS->mCharMoveVec);
-			if(bJumped)
 			{
-//				SoundEffectPlay("jump", pTS->mPlayerPos);
+				vec3	moveVec;
+
+				//check on ground and footing
+				bool	bSup		=Phys_VCharacterIsSupported(pTS->mpPhysChar);
+				bool	bFooting	=false;
+				if(bSup)
+				{
+					vec3	norm;
+					Phys_VCharacterGetGroundNormal(pTS->mpPhysChar, norm);
+					bFooting	=PM_IsGroundNormalAng(norm, RAMP_ANGLE);
+				}
+
+				bool	bJumped	=BPM_Update(pTS->mpBPM, bSup, bFooting, secDelta, moveVec);
+				if(bJumped)
+				{
+					SoundEffectPlay("jump", pTS->mPlayerPos);
+				}
+
+				//moveVec is an amount to move this frame
+				//convert to meters per second for phys
+				vec3	mpsMove;
+				glm_vec3_scale(moveVec, 60, mpsMove);
+
+				vec3	resultVelocity;
+				Phys_VCharacterMove(pPhys, pTS->mpPhysChar, mpsMove,
+					secDelta, resultVelocity);
+				
+				bSup	=Phys_VCharacterIsSupported(pTS->mpPhysChar);
+				if(bSup)
+				{
+					//here I think maybe the plane the player is on
+					//should be checked for a bad footing situation
+					//in which case velocity shouldn't be cleared
+					vec3	norm;
+					Phys_VCharacterGetGroundNormal(pTS->mpPhysChar, norm);
+					if(PM_IsGroundNormalAng(norm, RAMP_ANGLE))
+					{
+						//if still on the ground, cancel out vertical velocity
+						BPM_SetVerticalVelocity(pTS->mpBPM, resultVelocity);
+					}
+				}
 			}
 
-			MoveCharacter(pTS, pTS->mCharMoveVec);
+			Phys_VCharacterGetPos(pTS->mpPhysChar, pTS->mPlayerPos);
+
+			Phys_Update(pPhys, secDelta);
 
 			UpdateTimer_UpdateDone(pUT);
 		}
@@ -277,51 +339,32 @@ int main(void)
 		//render update
 		float	dt	=UpdateTimer_GetRenderUpdateDeltaSeconds(pUT);
 
+		vec3	velocity;
+		BPM_GetVelocity(pTS->mpBPM, velocity);
+
 		//update audio
-//		Audio_Update(pAud, pTS->mPlayerPos, pTS->mCharMoveVec);
+		Audio_Update(pAud, pTS->mPlayerPos, velocity);
 
 		//player moving?
-		float	moving	=glm_vec3_norm(pTS->mCharMoveVec);
+		float	moving	=glm_vec3_norm(velocity);
 
-		if(moving > 0.0f)
+		if(moving > MOVE_THRESHOLD)
 		{
-			if(BPM_IsGoodFooting(pTS->mpBPM))
+			if(Phys_VCharacterIsSupported(pTS->mpPhysChar))
 			{
-				animTime	+=dt * moving * 200.0f;
+				animTime	+=dt * moving * 1.0f;
 			}
 			else
 			{
-				animTime	+=dt * moving * 10.0f;
+				animTime	+=dt * moving * 0.1f;
 			}
-			AnimLib_Animate(pALib, "LD55ProtagRun", animTime);
+			AnimLib_Animate(pALib, "Run", animTime);
 		}
 		else
 		{
 			animTime	+=dt;
-			AnimLib_Animate(pALib, "LD55ProtagIdle", animTime);
+			AnimLib_Animate(pALib, "Idle", animTime);
 		}
-
-		{
-			if(dt > maxDT)
-			{
-				maxDT	=dt;
-			}
-
-			char	timeStr[32];
-
-//			sprintf(timeStr, "maxDT: %f", maxDT);
-			sprintf(timeStr, "animTime: %f", animTime);
-
-			ST_ModifyStringText(pTS->mpST, 69, timeStr);
-
-			sprintf(timeStr, "charMove: %2.2f %2.2f %2.2f",
-				pTS->mCharMoveVec[0], pTS->mCharMoveVec[1], pTS->mCharMoveVec[2]);
-
-			ST_ModifyStringText(pTS->mpST, 70, timeStr);
-		}
-
-		//update strings
-		ST_Update(pTS->mpST, pTS->mpGD);
 
 		//set no blend, I think post processing turns it on maybe
 		GD_OMSetBlendState(pTS->mpGD, StuffKeeper_GetBlendState(pSK, "NoBlending"));
@@ -350,16 +393,6 @@ int main(void)
 			else
 			{
 				GameCam_GetViewMatrixThird(pTS->mpCam, viewMat, pTS->mEyePos);
-
-				GameCam_GetLookMatrix(pTS->mpCam, headMat);
-				GameCam_GetFlatLookMatrix(pTS->mpCam, guraMat);
-
-				//drop mesh to ground
-				vec3	feetToCenter	={	0.0f, -0.25f, 0.0f	};
-				glm_translate(guraMat, feetToCenter);
-
-				Material	*pCM	=MatLib_GetMaterial(pCharMats, "ProtagHell");
-				MAT_SetWorld(pCM, guraMat);
 			}
 
 			CBK_SetView(pCBK, viewMat, pTS->mEyePos);
@@ -391,84 +424,41 @@ int main(void)
 		//terrain draw
 		Terrain_DrawMat(pTS->mpTer, pTS->mpGD, pCBK, pTerMat);
 
-		//debug draw many rays
-		if(!pTS->mbRecording && pTS->mMoveRays != NULL)
-		{
-			GD_IASetVertexBuffers(pTS->mpGD, pTS->mMoveRays->mpVB, pTS->mMoveRays->mVertSize, 0);
-			GD_IASetIndexBuffers(pTS->mpGD, pTS->mMoveRays->mpIB, DXGI_FORMAT_R32_UINT, 0);
-			MAT_Apply(pRaysMat, pCBK, pTS->mpGD);
-			GD_DrawIndexed(pTS->mpGD, pTS->mMoveRays->mIndexCount, 0, 0);
-		}
-
-		//impact sphere VB/IB etc
-		if(!pTS->mbRecording)
-		{
-			vec4	green	={	0.0f, 1.0f, 0.0f, 1.0f	};
-			vec4	blue	={	0.0f, 0.0f, 1.0f, 1.0f	};
-			vec4	red		={	1.0f, 0.0f, 0.0f, 1.0f	};
-			vec4	cyan	={	0.0f, 1.0f, 1.0f, 1.0f	};
-			vec4	purple	={	1.0f, 0.0f, 1.0f, 1.0f	};
-
-			vec3	start, end;
-
-			GD_IASetVertexBuffers(pTS->mpGD, pSphere->mpVB, pSphere->mVertSize, 0);
-			GD_IASetIndexBuffers(pTS->mpGD, pSphere->mpIB, DXGI_FORMAT_R16_UINT, 0);
-
-			glm_vec3_copy(pTS->mRecordedStarts[pTS->mRecordIndex], start);
-			glm_vec3_copy(pTS->mRecordedEnds[pTS->mRecordIndex], end);
-
-			vec3	newPos;
-			int	footing	=Terrain_MoveSphere(pTS->mpTer, start, end, 0.25f, newPos);
-
-			//start
-			glm_translate_make(spTrans, start);
-			MAT_SetSolidColour(pSphereMat, green);
-			MAT_SetWorld(pSphereMat, spTrans);
-			MAT_Apply(pSphereMat, pCBK, pTS->mpGD);
-			GD_DrawIndexed(pTS->mpGD, pSphere->mIndexCount, 0, 0);
-
-			//end
-			glm_translate_make(spTrans, end);
-			MAT_SetSolidColour(pSphereMat, blue);
-			MAT_SetWorld(pSphereMat, spTrans);
-			MAT_Apply(pSphereMat, pCBK, pTS->mpGD);
-			GD_DrawIndexed(pTS->mpGD, pSphere->mIndexCount, 0, 0);
-
-			//result
-			if(footing == 0)	//air
-			{
-				MAT_SetSolidColour(pSphereMat, cyan);
-			}
-			else if(footing == 1)	//ground
-			{
-				MAT_SetSolidColour(pSphereMat, red);
-			}
-			else if(footing == 2)	//bad
-			{
-				MAT_SetSolidColour(pSphereMat, purple);
-			}	
-			glm_translate_make(spTrans, newPos);
-			MAT_SetWorld(pSphereMat, spTrans);
-			MAT_Apply(pSphereMat, pCBK, pTS->mpGD);
-			GD_DrawIndexed(pTS->mpGD, pSphere->mIndexCount, 0, 0);
-		}
-
 		//set mesh draw stuff
-		if(pTS->mbFlyMode)
+		if(!pTS->mbFlyMode)
 		{
-			glm_translate_make(charMat, pTS->mPlayerPos);
-			Material	*pCM	=MatLib_GetMaterial(pCharMats, "ProtagHell");
+			//player direction
+			GameCam_GetFlatLookMatrix(pTS->mpCam, charMat);
+
+			//drop mesh to ground
+			vec3	feetToCenter	={	0.0f, -(PLAYER_HEIGHT * 0.5f), 0.0f	};
+
+			glm_translate(charMat, feetToCenter);
+
+			Material	*pCM	=MatLib_GetMaterial(pCharMats, "ProtagCel");
+			assert(pCM);
 			MAT_SetWorld(pCM, charMat);
+			MAT_SetDanglyForce(pCM, pTS->mDanglyForce);
 		}
 		GD_PSSetSampler(pTS->mpGD, StuffKeeper_GetSamplerState(pSK, "PointClamp"), 0);
 
-		Character_Draw(pChar, pMeshes, pCharMats, pALib, pTS->mpGD, pCBK);
+		Character_Draw(pChar, pCharMats, pALib, pTS->mpGD, pCBK);
 
 		//set proj for 2D
 		CBK_SetProjection(pCBK, textProj);
 		CBK_UpdateFrame(pCBK, pTS->mpGD);
 
-		ST_Draw(pTS->mpST, pTS->mpGD, pCBK);
+		Clay_UpdateScrollContainers(true, pTS->mScrollDelta, dt);
+
+		pTS->mScrollDelta.x	=pTS->mScrollDelta.y	=0.0f;
+	
+		Clay_RenderCommandArray renderCommands = sCreateLayout(pTS, velocity);
+	
+		UI_BeginDraw(pTS->mpUI);
+	
+		UI_ClayRender(pTS->mpUI, renderCommands);
+	
+		UI_EndDraw(pTS->mpUI);
 
 		//change back to 3D
 		CBK_SetProjection(pCBK, camProj);
@@ -477,14 +467,22 @@ int main(void)
 		GD_Present(pTS->mpGD);
 	}
 
-//	Audio_Destroy(&pAud);
+	Terrain_Destroy(&pTS->mpTer, pPhys);
+
+	Character_Destroy(pChar);
+
+	MatLib_Destroy(&pCharMats);
+
+	Phys_Destroy(&pPhys);
 
 	GD_Destroy(&pTS->mpGD);
+
+	Audio_Destroy(&pAud);
 
 	return	EXIT_SUCCESS;
 }
 
-static void	ToggleFlyModeEH(void *pContext, const SDL_Event *pEvt)
+static void	sToggleFlyModeEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -492,53 +490,46 @@ static void	ToggleFlyModeEH(void *pContext, const SDL_Event *pEvt)
 
 	pTS->mbFlyMode	=!pTS->mbFlyMode;
 
-	if(pTS->mbFlyMode)
-	{
-		BPM_SetMoveMethod(pTS->mpBPM, MOVE_FLY);
-	}
-	else
-	{
-		BPM_SetMoveMethod(pTS->mpBPM, MOVE_GROUND);
-	}
+	BPM_SetMoveMethod(pTS->mpBPM, pTS->mbFlyMode? BPM_MOVE_FLY : BPM_MOVE_GROUND);
 }
 
-static void	LeftMouseDownEH(void *pContext, const SDL_Event *pEvt)
+static void	sLeftMouseDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
 	assert(pTS);
 }
 
-static void	LeftMouseUpEH(void *pContext, const SDL_Event *pEvt)
+static void	sLeftMouseUpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
 	assert(pTS);
 }
 
-static void	RightMouseDownEH(void *pContext, const SDL_Event *pEvt)
+static void	sRightMouseDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
 	assert(pTS);
 
-	SDL_SetRelativeMouseMode(SDL_TRUE);
+	GD_SetMouseRelative(pTS->mpGD, true);
 
 	pTS->mbMouseLooking	=true;
 }
 
-static void	RightMouseUpEH(void *pContext, const SDL_Event *pEvt)
+static void	sRightMouseUpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
 	assert(pTS);
 
-	SDL_SetRelativeMouseMode(SDL_FALSE);
+	GD_SetMouseRelative(pTS->mpGD, false);
 
 	pTS->mbMouseLooking	=false;
 }
 
-static void	MouseMoveEH(void *pContext, const SDL_Event *pEvt)
+static void	sMouseMoveEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -551,7 +542,7 @@ static void	MouseMoveEH(void *pContext, const SDL_Event *pEvt)
 	}
 }
 
-static void	KeyMoveForwardEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveForwardEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -560,7 +551,7 @@ static void	KeyMoveForwardEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputForward(pTS->mpBPM);
 }
 
-static void	KeyMoveBackEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveBackEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -569,7 +560,7 @@ static void	KeyMoveBackEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputBack(pTS->mpBPM);
 }
 
-static void	KeyMoveLeftEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveLeftEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -578,7 +569,7 @@ static void	KeyMoveLeftEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputLeft(pTS->mpBPM);
 }
 
-static void	KeyMoveRightEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveRightEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -587,7 +578,7 @@ static void	KeyMoveRightEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputRight(pTS->mpBPM);
 }
 
-static void	KeyMoveUpEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveUpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -596,7 +587,7 @@ static void	KeyMoveUpEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputUp(pTS->mpBPM);
 }
 
-static void	KeyMoveDownEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -605,7 +596,7 @@ static void	KeyMoveDownEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputDown(pTS->mpBPM);
 }
 
-static void	KeyMoveJumpEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyMoveJumpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -614,7 +605,7 @@ static void	KeyMoveJumpEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputJump(pTS->mpBPM);
 }
 
-static void	KeySprintDownEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeySprintDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -623,7 +614,7 @@ static void	KeySprintDownEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputSprint(pTS->mpBPM, true);
 }
 
-static void	KeySprintUpEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeySprintUpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -632,7 +623,7 @@ static void	KeySprintUpEH(void *pContext, const SDL_Event *pEvt)
 	BPM_InputSprint(pTS->mpBPM, false);
 }
 
-static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyTurnLeftEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -641,7 +632,7 @@ static void	KeyTurnLeftEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mDeltaYaw	-=KEYTURN_RATE;
 }
 
-static void	KeyTurnRightEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyTurnRightEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -650,7 +641,7 @@ static void	KeyTurnRightEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mDeltaYaw	+=KEYTURN_RATE;
 }
 
-static void	KeyTurnUpEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyTurnUpEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -659,7 +650,7 @@ static void	KeyTurnUpEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mDeltaPitch	+=KEYTURN_RATE;
 }
 
-static void	KeyTurnDownEH(void *pContext, const SDL_Event *pEvt)
+static void	sKeyTurnDownEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -668,76 +659,7 @@ static void	KeyTurnDownEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mDeltaPitch	-=KEYTURN_RATE;
 }
 
-static void	KeySaveMovesEH(void *pContext, const SDL_Event *pEvt)
-{
-	TestStuff	*pTS	=(TestStuff *)pContext;
-
-	assert(pTS);
-
-	sSaveMoves(pTS, "Moves.dbg");
-}
-
-static void sDoRecordedMove(TestStuff *pTS)
-{
-	assert(pTS);
-
-	vec3	start, end;
-
-	glm_vec3_copy(pTS->mRecordedStarts[pTS->mRecordIndex], start);
-	glm_vec3_copy(pTS->mRecordedEnds[pTS->mRecordIndex], end);
-
-	vec3	newPos;
-	int	footing	=Terrain_MoveSphere(pTS->mpTer, start, end, 0.25f, newPos);
-
-	UT_string	*pStats;
-	utstring_new(pStats);
-
-	utstring_printf(pStats, "Move %d: %2.2f %2.2f %2.2f to %2.2f %2.2f %2.2f ",
-		pTS->mRecordIndex, start[0], start[1], start[2], end[0], end[1], end[2]);
-	
-	if(footing == 0)
-	{
-		utstring_printf(pStats, "Air");
-	}
-	else if(footing == 1)
-	{
-		utstring_printf(pStats, "Ground");
-	}
-	else if(footing == 2)
-	{
-		utstring_printf(pStats, "Bad Footing");
-	}	
-		
-	ST_ModifyStringText(pTS->mpST, 71, utstring_body(pStats));
-
-	utstring_done(pStats);
-}
-
-static void	KeyNextMoveEH(void *pContext, const SDL_Event *pEvt)
-{
-	TestStuff	*pTS	=(TestStuff *)pContext;
-
-	pTS->mRecordIndex++;
-	if(pTS->mRecordIndex >= NUM_REC_MOVES)
-	{
-		pTS->mRecordIndex	=0;
-	}
-	sDoRecordedMove(pTS);
-}
-
-static void	KeyPrevMoveEH(void *pContext, const SDL_Event *pEvt)
-{
-	TestStuff	*pTS	=(TestStuff *)pContext;
-
-	pTS->mRecordIndex--;
-	if(pTS->mRecordIndex < 0)
-	{
-		pTS->mRecordIndex	=NUM_REC_MOVES - 1;
-	}
-	sDoRecordedMove(pTS);
-}
-
-static void	EscEH(void *pContext, const SDL_Event *pEvt)
+static void	sEscEH(void *pContext, const SDL_Event *pEvt)
 {
 	TestStuff	*pTS	=(TestStuff *)pContext;
 
@@ -746,7 +668,7 @@ static void	EscEH(void *pContext, const SDL_Event *pEvt)
 	pTS->mbRunning	=false;
 }
 
-static Material	*MakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK)
+static Material	*sMakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK)
 {
 	Material	*pRet	=MAT_Create(pTS->mpGD);
 
@@ -768,7 +690,18 @@ static Material	*MakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK)
 	return	pRet;
 }
 
-static Material	*MakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK)
+static void	sSetDefaultCel(GraphicsDevice *pGD, CBKeeper *pCBK)
+{
+	float	mins[4]	={	0.0f, 0.3f, 0.6f, 1.0f	};
+	float	maxs[4]	={	0.3f, 0.6f, 1.0f, 5.0f	};
+	float	snap[4]	={	0.3f, 0.5f, 0.9f, 1.4f	};
+
+	CBK_SetCelSteps(pCBK, mins, maxs, snap, 4);
+
+	CBK_UpdateCel(pCBK, pGD);
+}
+
+static Material	*sMakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK)
 {
 	Material	*pRet	=MAT_Create(pTS->mpGD);
 
@@ -779,25 +712,7 @@ static Material	*MakeSkyBoxMat(TestStuff *pTS, const StuffKeeper *pSK)
 	return	pRet;
 }
 
-static Material	*MakeRaysMat(TestStuff *pTS, const StuffKeeper *pSK)
-{
-	Material	*pRet	=MAT_Create(pTS->mpGD);
-
-	vec3	light0		={	1.0f, 1.0f, 1.0f	};
-	vec3	light1		={	0.5f, 0.5f, 0.5f	};
-	vec3	light2		={	0.3f, 0.3f, 0.3f	};
-
-	MAT_SetLights(pRet, light0, light1, light2, pTS->mLightDir);
-	MAT_SetVShader(pRet, "WNormWPosVColorVS", pSK);
-	MAT_SetPShader(pRet, "TriSolidVColorSpecPS", pSK);
-	MAT_SetSolidColour(pRet, GLM_VEC4_ONE);
-	MAT_SetSpecular(pRet, GLM_VEC3_ONE, 4.0f);
-	MAT_SetWorld(pRet, GLM_MAT4_IDENTITY);
-
-	return	pRet;
-}
-
-static Material	*MakeSphereMat(TestStuff *pTS, const StuffKeeper *pSK)
+static Material	*sMakeSphereMat(TestStuff *pTS, const StuffKeeper *pSK)
 {
 	Material	*pRet	=MAT_Create(pTS->mpGD);
 
@@ -815,44 +730,41 @@ static Material	*MakeSphereMat(TestStuff *pTS, const StuffKeeper *pSK)
 	return	pRet;
 }
 
-static void	SetupKeyBinds(Input *pInp)
+static void	sSetupKeyBinds(Input *pInp)
 {
 	//event style bindings
-	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_f, ToggleFlyModeEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_ESCAPE, EscEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_v, KeySaveMovesEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_COMMA, KeyPrevMoveEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_PERIOD, KeyNextMoveEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_F, sToggleFlyModeEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_EVENT, SDLK_ESCAPE, sEscEH);
 
 	//held bindings
 	//movement
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_w, KeyMoveForwardEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_a, KeyMoveLeftEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_s, KeyMoveBackEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_d, KeyMoveRightEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_c, KeyMoveUpEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_z, KeyMoveDownEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_SPACE, KeyMoveJumpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_W, sKeyMoveForwardEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_A, sKeyMoveLeftEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_S, sKeyMoveBackEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_D, sKeyMoveRightEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_C, sKeyMoveUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_Z, sKeyMoveDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_SPACE, sKeyMoveJumpEH);
 
 	//key turning
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_q, KeyTurnLeftEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_e, KeyTurnRightEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_r, KeyTurnUpEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_t, KeyTurnDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_Q, sKeyTurnLeftEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_E, sKeyTurnRightEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_R, sKeyTurnUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_HELD, SDLK_T, sKeyTurnDownEH);
 
 	//move data events
-	INP_MakeBinding(pInp, INP_BIND_TYPE_MOVE, SDL_EVENT_MOUSE_MOTION, MouseMoveEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_MOVE, SDL_EVENT_MOUSE_MOTION, sMouseMoveEH);
 
 	//down/up events
-	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDL_BUTTON_RIGHT, RightMouseDownEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_RIGHT, RightMouseUpEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDL_BUTTON_LEFT, LeftMouseDownEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_LEFT, LeftMouseUpEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDLK_LSHIFT, KeySprintDownEH);
-	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_LSHIFT, KeySprintUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDL_BUTTON_RIGHT, sRightMouseDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_RIGHT, sRightMouseUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDL_BUTTON_LEFT, sLeftMouseDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDL_BUTTON_LEFT, sLeftMouseUpEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_PRESS, SDLK_LSHIFT, sKeySprintDownEH);
+	INP_MakeBinding(pInp, INP_BIND_TYPE_RELEASE, SDLK_LSHIFT, sKeySprintUpEH);
 }
 
-static void	SetupRastVP(GraphicsDevice *pGD)
+static void	sSetupRastVP(GraphicsDevice *pGD)
 {
 	D3D11_RASTERIZER_DESC	rastDesc;
 	rastDesc.AntialiasedLineEnable	=false;
@@ -881,187 +793,50 @@ static void	SetupRastVP(GraphicsDevice *pGD)
 	GD_IASetPrimitiveTopology(pGD, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 }
 
-static void SetupDebugStrings(TestStuff *pTS, const StuffKeeper *pSK)
+
+//clay stuffs
+static char	sVelString[64];
+
+static Clay_RenderCommandArray	sCreateLayout(const TestStuff *pTS, vec3 velocity)
 {
-	//debug screen text
-	pTS->mpST	=ST_Create(pTS->mpGD, pSK, MAX_ST_CHARS, "CGA", "CGA");
+	Clay_BeginLayout();
 
-	vec2	embiggen	={	2.0f, 2.0f	};
-	vec2	topLeftPos	={	5.0f, 5.0f	};
-	vec2	nextLine	={	0.0f, 20.0f	};
-	vec4	red			={	1.0f, 0.0f, 0.0f, 1.0f	};
-	__attribute_maybe_unused__
-	vec4	blue		={	0.0f, 0.0f, 1.0f, 1.0f	};
-	vec4	green		={	0.0f, 1.0f, 0.0f, 1.0f	};
-	vec4	magenta		={	1.0f, 0.0f, 1.0f, 1.0f	};
-	__attribute_maybe_unused__
-	vec4	cyan		={	0.0f, 1.0f, 1.0f, 1.0f	};
+	sprintf(sVelString, "Velocity: %f, %f, %f", velocity[0], velocity[1], velocity[2]);
 
+	Clay_String	velInfo;
 
-	ST_AddString(pTS->mpST, "Timing thing", 69, green, topLeftPos, embiggen);
+	velInfo.chars	=sVelString;
+	velInfo.length	=strlen(sVelString);
 
-	glm_vec2_add(topLeftPos, nextLine, topLeftPos);
-	ST_AddString(pTS->mpST, "Movestuff", 70, red, topLeftPos, embiggen);
+	CLAY({.id=CLAY_ID("OuterContainer"), .layout =
+		{
+			.layoutDirection = CLAY_TOP_TO_BOTTOM,
+			.sizing =
+			{
+				.width = CLAY_SIZING_GROW(0),
+				.height = CLAY_SIZING_GROW(0)
+			},
+			.padding = { 8, 8, 8, 8 },
+			.childGap = 8
+		}})
+	{
+		CLAY_TEXT(velInfo, CLAY_TEXT_CONFIG({ .fontSize = 26, .textColor = {0, 70, 70, 155} }));
 
-	glm_vec2_add(topLeftPos, nextLine, topLeftPos);
-	ST_AddString(pTS->mpST, "Pos Storage", 71, magenta, topLeftPos, embiggen);
+//		sCheckLOS(pTS);
+	}
+
+	return	Clay_EndLayout();
 }
 
-static void	MoveCharacter(TestStuff *pTS, const vec3 moveVec)
-{
-	if(pTS->mbFlyMode)
-	{
-		glm_vec3_add(pTS->mEyePos, moveVec, pTS->mEyePos);
-		return;
-	}
-	vec3	end, newPos;
-	glm_vec3_add(pTS->mPlayerPos, moveVec, end);
+static bool reinitializeClay = false;
 
-	if(pTS->mbRecording)
-	{
-		glm_vec3_copy(pTS->mPlayerPos, pTS->mRecordedStarts[pTS->mRecordIndex]);
-		glm_vec3_copy(end, pTS->mRecordedEnds[pTS->mRecordIndex]);
-
-		pTS->mRecordIndex++;
-		if(pTS->mRecordIndex >= NUM_REC_MOVES)
-		{
-			pTS->mRecordIndex	=0;
-		}
-	}
-
-	int	footing	=Terrain_MoveSphere(pTS->mpTer, pTS->mPlayerPos, end, 0.25f, newPos);
-	
-	BPM_SetFooting(pTS->mpBPM, footing);
-
-	//watch for a glitchy move
-	float	dist	=glm_vec3_distance(pTS->mPlayerPos, newPos);
-	if(dist > 10.0f)
-	{
-		printf("Glitchy Move: %f %f %f to %f %f %f\n",
-			pTS->mPlayerPos[0], pTS->mPlayerPos[1], pTS->mPlayerPos[2], 
-			end[0], end[1], end[2]);
-	}
-
-	glm_vec3_copy(newPos, pTS->mPlayerPos);
-
-	UT_string	*pStats;
-	utstring_new(pStats);
-
-	if(footing == 0)
-	{
-		utstring_printf(pStats, "Air");
-	}
-	else if(footing == 1)
-	{
-		utstring_printf(pStats, "Ground");
-	}
-	else if(footing == 2)
-	{
-		utstring_printf(pStats, "Bad Footing");
-	}	
-		
-//	ST_ModifyStringText(pTS->mpST, 71, utstring_body(pStats));
-
-	utstring_done(pStats);
-}
-
-static DictSZ *sLoadCharacterMeshParts(GraphicsDevice *pGD, StuffKeeper *pSK, const Character *pChar)
-{
-	StringList	*pParts	=Character_GetPartList(pChar);
-
-	DictSZ		*pMeshes;
-	UT_string	*szMeshPath;
-
-	DictSZ_New(&pMeshes);
-	utstring_new(szMeshPath);
-
-	const StringList	*pCur	=SZList_Iterate(pParts);
-	while(pCur != NULL)
-	{
-		utstring_printf(szMeshPath, "Characters/%s.mesh", SZList_IteratorVal(pCur));
-
-		Mesh	*pMesh	=Mesh_Read(pGD, pSK, utstring_body(szMeshPath), false);
-
-		DictSZ_Add(&pMeshes, SZList_IteratorValUT(pCur), pMesh);
-
-		pCur	=SZList_IteratorNext(pCur);
-	}
-
-	utstring_done(szMeshPath);
-	SZList_Clear(&pParts);
-
-	return	pMeshes;
-}
-
-static void	sSaveMoves(TestStuff *pTS, const char *szFileName)
-{
-	FILE	*f	=fopen(szFileName, "wb");
-	if(f == NULL)
-	{
-		printf("Couldn't open moves file %s...\n", szFileName);
-		return;
-	}
-
-	pTS->mbRecording	=false;
-
-	int	num	=NUM_REC_MOVES;
-
-	fwrite(&num, sizeof(int), 1, f);
-
-	fwrite(pTS->mRecordedStarts, sizeof(vec3), NUM_REC_MOVES, f);
-	fwrite(pTS->mRecordedEnds, sizeof(vec3), NUM_REC_MOVES, f);
-
-	fclose(f);
-}
-
-static void	sLoadMoves(TestStuff *pTS, const char *szFileName)
-{
-	FILE	*f	=fopen(szFileName, "rb");
-
-	if(f == NULL)
-	{
-		printf("Couldn't open moves file %s...\n", szFileName);
-		return;
-	}
-
-	pTS->mbRecording	=false;
-
-	int	num;
-	fread(&num, sizeof(int), 1, f);
-
-	assert(num == NUM_REC_MOVES);
-
-	fread(pTS->mRecordedStarts, sizeof(vec3), num, f);
-	fread(pTS->mRecordedEnds, sizeof(vec3), num, f);
-
-	fclose(f);
-
-	for(int i=0;i < num;i++)
-	{
-		vec3	start, prevEnd;
-		if(i==0)
-		{
-			glm_vec3_copy(pTS->mRecordedEnds[num - 1], prevEnd);
-		}
-		else
-		{
-			glm_vec3_copy(pTS->mRecordedEnds[i - 1], prevEnd);
-		}
-
-		glm_vec3_copy(pTS->mRecordedStarts[i], start);
-
-		if(!Misc_CompareVec3s(start, prevEnd))
-		{
-			printf("Loaded move index %d doesn't match previous end!\n", i);
-		}
-	}
-
-	vec4	randCols[num];
-	for(int i=0;i < num;i++)
-	{
-		Misc_RandomColour(randCols[i]);
-	}
-
-	pTS->mMoveRays	=PF_CreateManyRays(pTS->mRecordedStarts,
-						pTS->mRecordedEnds, randCols, num, 0.015f, pTS->mpGD);
+static void sHandleClayErrors(Clay_ErrorData errorData) {
+    printf("%s", errorData.errorText.chars);
+    if (errorData.errorType == CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED) {
+        reinitializeClay = true;
+        Clay_SetMaxElementCount(Clay_GetMaxElementCount() * 2);
+    } else if (errorData.errorType == CLAY_ERROR_TYPE_TEXT_MEASUREMENT_CAPACITY_EXCEEDED) {
+        reinitializeClay = true;
+        Clay_SetMaxMeasureTextCacheWordCount(Clay_GetMaxMeasureTextCacheWordCount() * 2);
+    }
 }

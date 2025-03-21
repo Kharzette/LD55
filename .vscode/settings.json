@@ -1,5 +1,8 @@
 {
 	"CurrentGame": "/mnt/SkyFather/Games/CurrentGame",
 	"CurrentGameLibs": "${config:CurrentGame}/libs",
-    "C_Cpp.default.compilerPath": "/usr/bin/gcc"
+	"C_Cpp.default.compilerPath": "/usr/bin/gcc",
+	"files.associations": {
+		"updatetimer.h": "c"
+	}
 }

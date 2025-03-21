@@ -14,11 +14,56 @@ x		draw footing while moving to string on screen
 			Some way to stitch multiple together
 		Maybe look into that newer fractal generation?
 		Shadowmapping
+		Runtime deformation
+			flattening for staticmesh placement
+			craters for big explosions or high v impacts
+			Diggery
 	Trees and stuff
 	Fix busted 3d audio
 	Collide camera with terrain
 	Movement collider for characters using 2 spheres?
 		table with offset-to-origin depending on anim?
-	Slide animation for bad footing
+x	Slide animation for bad footing
 	Slide sound for bad footing
 	Slide particle for bad footing
+
+tri collision
+	Return october first todo:
+		Again, can't remember what was going on
+		Nuke all dead code
+		Get a solid ray triangle collider going
+		Get a solid ray -> multiple triangles collider going
+		extend the above to spheres
+		extend to swept spheres
+		Make sure the bounding volume quadtree stuff is good
+
+		Tree traversal is returning lists of planes
+			This is invalid because there's no check for the collision
+			being within the bounds of the triangle involved.
+			Need to go with a solid triangle based solution
+	I have no memory of any of this, so start over with the basics.
+		Tree traversal should go down the side the start point is on.
+		The "both start and end behind plane" thing is natural
+			on hillsides because the ray might be way outside the tri
+		Nans in the return plane, might be a miss case?
+			hits expected because of previous recorded hits
+			but the points are adjusted in a loop
+	bPlane	=test face plane distance < radius
+	bEdge0	=test distance to line < radius
+	bEdge1	=test distance to line < radius
+	bEdge2	=test distance to line < radius
+	fEPD0	=distance to edge0 plane shifted in by rad
+	fEPD1	=distance to edge1 plane shifted in by rad
+	fEPD2	=distance to edge2 plane shifted in by rad
+	vd0		=distance to v0
+	vd1		=distance to v1
+	vd2		=distance to v2
+
+	if(!bPlane)							return	false;
+	if(fEPD0 1 2 < radius)				return true;
+	if(bEdge0 && (fEPD2 1 < radius))	return true;
+	if(bEdge1 && (fEPD0 2 < radius))	return true;
+	if(bEdge2 && (fEPD0 1 < radius))	return true;
+	if(vd0 1 2 < radius)				return	true;
+
+
