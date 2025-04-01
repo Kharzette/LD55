@@ -3,6 +3,10 @@
 	"CurrentGameLibs": "${config:CurrentGame}/libs",
 	"C_Cpp.default.compilerPath": "/usr/bin/gcc",
 	"files.associations": {
-		"updatetimer.h": "c"
+		"updatetimer.h": "c",
+		"particleboss.h": "c",
+		"graphicsdevice.h": "c",
+		"stuffkeeper.h": "c",
+		"cbkeeper.h": "c"
 	}
 }

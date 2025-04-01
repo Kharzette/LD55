@@ -66,4 +66,9 @@ tri collision
 	if(bEdge2 && (fEPD0 1 < radius))	return true;
 	if(vd0 1 2 < radius)				return	true;
 
-
+Caravan SandWitch
+Tavern Talk
+Urban Myth Dissolution Center
+Caves of Qud
+No case should remain unsolved
+Neva

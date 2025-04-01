@@ -26,6 +26,7 @@
 #include	"GrogLibsC/MeshLib/AnimLib.h"
 #include	"GrogLibsC/MeshLib/Character.h"
 #include	"GrogLibsC/MeshLib/CommonPrims.h"
+#include	"GrogLibsC/MeshLib/ParticleBoss.h"
 #include	"GrogLibsC/InputLib/Input.h"
 #include	"GrogLibsC/PhysicsLib/PhysicsStuff.h"
 
@@ -52,6 +53,7 @@
 #define	PLAYER_HEIGHT		(1.75f)
 #define	PLAYER_EYE_OFFSET	(0.8)
 #define	MAX_UI_VERTS		(8192)
+#define	MAX_PARTICLES		4096
 #define	RAMP_ANGLE			0.7f	//steepness can traverse on foot
 
 
@@ -65,6 +67,16 @@ typedef struct	TestStuff_t
 	PhysicsStuff	*mpPhys;
 	PhysVCharacter	*mpPhysChar;
 	BipedMover		*mpBPM;
+	ParticleBoss	*mpPBoss;
+
+	//states
+	ID3D11BlendState		*mpNoBlend;
+	ID3D11DepthStencilState	*mpDepthEnable;
+	ID3D11DepthStencilState	*mpDepthDisable;
+	ID3D11SamplerState		*mpPointClamp;
+
+	//layout for skybox
+	ID3D11InputLayout	*mpSkyLayout;
 
 	//toggles
 	bool	mbMouseLooking;
@@ -171,6 +183,12 @@ int main(void)
 		return	EXIT_FAILURE;
 	}
 
+	//grab common states
+	pTS->mpDepthEnable	=StuffKeeper_GetDepthStencilState(pSK, "EnableDepth");
+	pTS->mpDepthDisable	=StuffKeeper_GetDepthStencilState(pSK, "DisableDepth");
+	pTS->mpNoBlend		=StuffKeeper_GetBlendState(pSK, "NoBlend");
+	pTS->mpPointClamp	=StuffKeeper_GetSamplerState(pSK, "PointClamp");
+
 	//a terrain chunk
 	pTS->mpTer	=Terrain_Create(pTS->mpGD, pPhys, "Blort",
 		"Textures/Terrain/HeightMaps/HeightMap.png",
@@ -188,6 +206,8 @@ int main(void)
 		CBK_SetSky(pCBK, skyHorizon, skyHigh);
 		CBK_SetFogVars(pCBK, 50.0f, 300.0f, true);
 	}
+
+	pTS->mpSkyLayout	=StuffKeeper_GetInputLayout(pSK, "VPosNormTex0");
 
 	sSetDefaultCel(pTS->mpGD, pCBK);
 
@@ -226,6 +246,9 @@ int main(void)
 
 	//set constant buffers to shaders, think I just have to do this once
 	CBK_SetCommonCBToShaders(pCBK, pTS->mpGD);
+	CBK_SetEmitterToShaders(pCBK, pTS->mpGD);
+
+	pTS->mpPBoss	=PB_Create(pTS->mpGD, pSK, pCBK);
 
 	pTS->mpUI	=UI_Create(pTS->mpGD, pSK, MAX_UI_VERTS);
 
@@ -246,6 +269,14 @@ int main(void)
 	glm_vec3_normalize(pTS->mLightDir);
 	glm_mat4_identity(charMat);
 
+	uint32_t	emitterID	=PB_CreateEmitter(pTS->mpPBoss, "Particles/Fiery",
+		EMIT_SHAPE_BOX, 1.1f, (vec4){1,1,1,0.95f}, 0.01f,
+		5.0f, GLM_VEC3_ZERO, MAX_PARTICLES, -0.9f, 0.9f,
+		(vec4){-0.01f, 0, 0, 0.01f}, (vec4){-0.02f, 0, 0, 0.01f},
+		-0.1f, 0.1f, -0.5f, 0.5f, 12, 25, GLM_VEC3_ZERO);
+
+	PB_EmitterActivate(pTS->mpPBoss, emitterID, true);
+
 	UpdateTimer	*pUT	=UpdateTimer_Create(true, false);
 
 	//TODO: user config file or something?  144 might be too fast for some
@@ -264,6 +295,8 @@ int main(void)
 	Character	*pChar		=Character_Read(pTS->mpGD, pSK, "Characters/Protag.Character", false);
 	AnimLib		*pALib		=AnimLib_Read("Characters/Protag.AnimLib");
 	MaterialLib	*pCharMats	=MatLib_Read("Characters/Protag.MatLib", pSK);
+
+	Character_AssignMaterial(pChar, 0, "ProtagHellCel");
 
 	float	animTime		=0.0f;
 
@@ -367,8 +400,8 @@ int main(void)
 		}
 
 		//set no blend, I think post processing turns it on maybe
-		GD_OMSetBlendState(pTS->mpGD, StuffKeeper_GetBlendState(pSK, "NoBlending"));
-		GD_PSSetSampler(pTS->mpGD, StuffKeeper_GetSamplerState(pSK, "PointWrap"), 0);
+		GD_OMSetBlendState(pTS->mpGD, pTS->mpNoBlend);
+		GD_PSSetSampler(pTS->mpGD, pTS->mpPointClamp, 0);
 
 		//camera update
 		if(pTS->mbFlyMode)
@@ -409,17 +442,18 @@ int main(void)
 		CBK_UpdateFrame(pCBK, pTS->mpGD);
 
 		//turn depth off for sky
-		GD_OMSetDepthStencilState(pTS->mpGD, StuffKeeper_GetDepthStencilState(pSK, "DisableDepth"));
+		GD_OMSetDepthStencilState(pTS->mpGD, pTS->mpDepthDisable);
 
 		//draw sky first
 		GD_IASetVertexBuffers(pTS->mpGD, pSkyCube->mpVB, pSkyCube->mVertSize, 0);
 		GD_IASetIndexBuffers(pTS->mpGD, pSkyCube->mpIB, DXGI_FORMAT_R16_UINT, 0);
+		GD_IASetInputLayout(pTS->mpGD, pTS->mpSkyLayout);
 
 		MAT_Apply(pSkyBoxMat, pCBK, pTS->mpGD);
 		GD_DrawIndexed(pTS->mpGD, pSkyCube->mIndexCount, 0, 0);
 
 		//turn depth back on
-		GD_OMSetDepthStencilState(pTS->mpGD, StuffKeeper_GetDepthStencilState(pSK, "EnableDepth"));
+		GD_OMSetDepthStencilState(pTS->mpGD, pTS->mpDepthEnable);
 
 		//terrain draw
 		Terrain_DrawMat(pTS->mpTer, pTS->mpGD, pCBK, pTerMat);
@@ -435,14 +469,15 @@ int main(void)
 
 			glm_translate(charMat, feetToCenter);
 
-			Material	*pCM	=MatLib_GetMaterial(pCharMats, "ProtagCel");
+			Material	*pCM	=MatLib_GetMaterial(pCharMats, "ProtagHellCel");
 			assert(pCM);
 			MAT_SetWorld(pCM, charMat);
 			MAT_SetDanglyForce(pCM, pTS->mDanglyForce);
 		}
-		GD_PSSetSampler(pTS->mpGD, StuffKeeper_GetSamplerState(pSK, "PointClamp"), 0);
 
 		Character_Draw(pChar, pCharMats, pALib, pTS->mpGD, pCBK);
+
+		PB_UpdateAndDraw(pTS->mpPBoss, dt);
 
 		//set proj for 2D
 		CBK_SetProjection(pCBK, textProj);
@@ -474,6 +509,8 @@ int main(void)
 	MatLib_Destroy(&pCharMats);
 
 	Phys_Destroy(&pPhys);
+
+	PB_Destroy(&pTS->mpPBoss);
 
 	GD_Destroy(&pTS->mpGD);
 

@@ -74,8 +74,8 @@ Summoning!
 		Cleansed (-filth)
 		Snared (-movespeed)
 	Anims needed for protag
-		Idle
-		Run
+x		Idle
+x		Run
 		draw
 		sheathe
 		sword 1 hand attack
@@ -97,7 +97,7 @@ Summoning!
 		block stagger
 		parry stagger
 		meditate
-		pray
+x		pray
 		use item food
 		use item drink
 		use item medical (needle stab?)
