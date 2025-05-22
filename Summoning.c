@@ -11,7 +11,7 @@
 #include	"GrogLibsC/MaterialLib/Material.h"
 #include	"GrogLibsC/MaterialLib/MaterialLib.h"
 #define	CLAY_IMPLEMENTATION
-#include	"GrogLibsC/MaterialLib/UIStuff.h"
+#include	"GrogLibsC/UILib/UIStuff.h"
 #include	"GrogLibsC/UtilityLib/GraphicsDevice.h"
 #include	"GrogLibsC/UtilityLib/StringStuff.h"
 #include	"GrogLibsC/UtilityLib/ListStuff.h"
@@ -75,8 +75,8 @@ typedef struct	TestStuff_t
 	ID3D11DepthStencilState	*mpDepthDisable;
 	ID3D11SamplerState		*mpPointClamp;
 
-	//layout for skybox
-	ID3D11InputLayout	*mpSkyLayout;
+	//SB for skybox
+	ID3D11ShaderResourceView	*mpSkySRV;
 
 	//toggles
 	bool	mbMouseLooking;
@@ -207,8 +207,6 @@ int main(void)
 		CBK_SetFogVars(pCBK, 50.0f, 300.0f, true);
 	}
 
-	pTS->mpSkyLayout	=StuffKeeper_GetInputLayout(pSK, "VPosNormTex0");
-
 	sSetDefaultCel(pTS->mpGD, pCBK);
 
 	PP_SetTargets(pPP, pTS->mpGD, "BackColor", "BackDepth");
@@ -269,11 +267,12 @@ int main(void)
 	glm_vec3_normalize(pTS->mLightDir);
 	glm_mat4_identity(charMat);
 
-	uint32_t	emitterID	=PB_CreateEmitter(pTS->mpPBoss, "Particles/Fiery",
-		EMIT_SHAPE_BOX, 1.1f, (vec4){1,1,1,0.95f}, 0.01f,
-		5.0f, GLM_VEC3_ZERO, MAX_PARTICLES, -0.9f, 0.9f,
-		(vec4){-0.01f, 0, 0, 0.01f}, (vec4){-0.02f, 0, 0, 0.01f},
-		-0.1f, 0.1f, -0.5f, 0.5f, 12, 25, GLM_VEC3_ZERO);
+	uint32_t	emitterID	=PB_CreateEmitter(pTS->mpPBoss,
+		pSK, "Particles/HeartPart",
+		EMIT_SHAPE_SPHERE, 0.1f, (vec4){1,1,1,0.5f}, 0.01f,
+		0.1f, GLM_VEC3_ZERO, MAX_PARTICLES, -0.9f, 0.9f,
+		(vec4){-0.2f, -0.2f, -0.2f, -0.2f}, (vec4){0.2f, 0.2f, 0.2f, 0.2f},
+		-0.1f, 0.1f, -0.5f, 0.5f, 5, 10, GLM_VEC3_ZERO);
 
 	PB_EmitterActivate(pTS->mpPBoss, emitterID, true);
 
@@ -375,6 +374,11 @@ int main(void)
 		vec3	velocity;
 		BPM_GetVelocity(pTS->mpBPM, velocity);
 
+		PB_SetEmitterPosition(pTS->mpPBoss, emitterID, pTS->mPlayerPos);
+
+		//TODO: an emitter velocity
+		//PB_SetEmitterVelocity(pTS->mpPBoss, emitterID, velocity);
+
 		//update audio
 		Audio_Update(pAud, pTS->mPlayerPos, velocity);
 
@@ -445,9 +449,8 @@ int main(void)
 		GD_OMSetDepthStencilState(pTS->mpGD, pTS->mpDepthDisable);
 
 		//draw sky first
-		GD_IASetVertexBuffers(pTS->mpGD, pSkyCube->mpVB, pSkyCube->mVertSize, 0);
+		GD_VSSetSRV(pTS->mpGD, pSkyCube->mpVBSRV, 0);
 		GD_IASetIndexBuffers(pTS->mpGD, pSkyCube->mpIB, DXGI_FORMAT_R16_UINT, 0);
-		GD_IASetInputLayout(pTS->mpGD, pTS->mpSkyLayout);
 
 		MAT_Apply(pSkyBoxMat, pCBK, pTS->mpGD);
 		GD_DrawIndexed(pTS->mpGD, pSkyCube->mIndexCount, 0, 0);
@@ -714,15 +717,12 @@ static Material	*sMakeTerrainMat(TestStuff *pTS, const StuffKeeper *pSK)
 	vec3	light2		={	0.1f, 0.2f, 0.2f	};
 
 	MAT_SetLights(pRet, light0, light1, light2, pTS->mLightDir);
-	MAT_SetVShader(pRet, "WNormWPosTexFactVS", pSK);
-	MAT_SetPShader(pRet, "TriTexFact8PS", pSK);
+	MAT_SetVShader(pRet, "TerrainVS", pSK);
+	MAT_SetPShader(pRet, "TerrainPS", pSK);
 	MAT_SetSolidColour(pRet, GLM_VEC4_ONE);
 	MAT_SetSRV0(pRet, "Terrain/TerAtlasLudum", pSK);
 	MAT_SetSpecular(pRet, GLM_VEC3_ONE, 3.0f);
 	MAT_SetWorld(pRet, GLM_MAT4_IDENTITY);
-
-	//srv is set in the material, but need input layout set
-	Terrain_SetSRVAndLayout(pTS->mpTer, NULL, pSK);
 
 	return	pRet;
 }

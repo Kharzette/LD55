@@ -12,7 +12,7 @@ CFLAGS=-std=gnu23 -g -O0 -march=native	\
 	-Wl,-rpath='libs',--disable-new-dtags
 
 SOURCES=$(wildcard *.c)
-LIBS=-lvulkan -lm -lUtilityLib -lPhysicsLib -lMaterialLib -lMeshLib -lTerrainLib -lInputLib -lAudioLib
+LIBS=-lvulkan -lm -lUtilityLib -lPhysicsLib -lMaterialLib -lMeshLib -lUILib -lTerrainLib -lInputLib -lAudioLib
 LDFLAGS=-Llibs
 
 all: Summoning

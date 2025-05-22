@@ -20,7 +20,7 @@
             "group": "none",
             "options": {"cwd": "${workspaceFolder}"},
             "problemMatcher": [],
-            "dependsOn" : [ "aud make", "inp make", "mat make", "mesh make", "ter make", "util make", "phys make"],
+            "dependsOn" : [ "aud make", "inp make", "mat make", "mesh make", "ui make", "ter make", "util make", "phys make"],
             "detail": "Copy grog libs to tool libs directory for testing."
         },
         {
@@ -72,6 +72,15 @@
             "command": "make",
             "group": "build",
             "options": {"cwd": "${workspaceFolder}/GrogLibsC/MaterialLib"},
+            "problemMatcher": [],
+            "detail": "make build task"
+        },
+        {
+            "type": "shell",
+            "label": "ui make",
+            "command": "make",
+            "group": "build",
+            "options": {"cwd": "${workspaceFolder}/GrogLibsC/UILib"},
             "problemMatcher": [],
             "detail": "make build task"
         },
